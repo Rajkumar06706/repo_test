@@ -6,12 +6,12 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>com.example</groupId>
-    <artifactId>java-app</artifactId>
+    <artifactId>pr-validation-app</artifactId>
     <version>1.0.0</version>
     <packaging>jar</packaging>
 
-    <name>Java Application</name>
-    <description>Java application with CI/CD pipeline</description>
+    <name>PR Validation Application</name>
+    <description>Application with comprehensive validation pipeline</description>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -20,6 +20,7 @@
         <junit.version>4.13.2</junit.version>
         <maven.checkstyle.plugin.version>3.3.1</maven.checkstyle.plugin.version>
         <maven.spotbugs.plugin.version>4.8.1</maven.spotbugs.plugin.version>
+        <checkstyle.version>10.12.3</checkstyle.version>
     </properties>
 
     <dependencies>
@@ -43,6 +44,20 @@
             <artifactId>logback-classic</artifactId>
             <version>1.4.11</version>
         </dependency>
+
+        <!-- JSON Processing -->
+        <dependency>
+            <groupId>com.google.code.gson</groupId>
+            <artifactId>gson</artifactId>
+            <version>2.10.1</version>
+        </dependency>
+
+        <!-- HTTP Client -->
+        <dependency>
+            <groupId>org.apache.httpcomponents.client5</groupId>
+            <artifactId>httpclient5</artifactId>
+            <version>5.2.1</version>
+        </dependency>
     </dependencies>
 
     <build>
@@ -59,7 +74,7 @@
                 </configuration>
             </plugin>
 
-            <!-- Maven Surefire Plugin for Tests -->
+            <!-- Maven Surefire Plugin for Running Tests -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
@@ -81,7 +96,24 @@
                     <configLocation>google_checks.xml</configLocation>
                     <consoleOutput>true</consoleOutput>
                     <failsOnError>false</failsOnError>
+                    <linkXRef>false</linkXRef>
                 </configuration>
+                <executions>
+                    <execution>
+                        <id>validate</id>
+                        <phase>validate</phase>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <dependencies>
+                    <dependency>
+                        <groupId>com.puppycrawl.tools</groupId>
+                        <artifactId>checkstyle</artifactId>
+                        <version>${checkstyle.version}</version>
+                    </dependency>
+                </dependencies>
             </plugin>
 
             <!-- SpotBugs Plugin -->
@@ -92,7 +124,17 @@
                 <configuration>
                     <effort>Max</effort>
                     <threshold>Low</threshold>
+                    <xmlOutput>true</xmlOutput>
                 </configuration>
+                <executions>
+                    <execution>
+                        <id>analyze</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                    </execution>
+                </executions>
             </plugin>
 
             <!-- Maven JAR Plugin -->
@@ -103,14 +145,14 @@
                 <configuration>
                     <archive>
                         <manifest>
-                            <mainClass>com.example.Application</mainClass>
+                            <mainClass>com.example.Main</mainClass>
                             <addClasspath>true</addClasspath>
                         </manifest>
                     </archive>
                 </configuration>
             </plugin>
 
-            <!-- Maven Assembly Plugin -->
+            <!-- Maven Assembly Plugin for Creating Fat JAR -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-assembly-plugin</artifactId>
@@ -122,16 +164,56 @@
                             <goal>single</goal>
                         </goals>
                         <configuration>
+                            <archive>
+                                <manifest>
+                                    <mainClass>com.example.Main</mainClass>
+                                </manifest>
+                            </archive>
                             <descriptorRefs>
                                 <descriptorRef>jar-with-dependencies</descriptorRef>
                             </descriptorRefs>
-                            <finalName>java-app</finalName>
+                            <finalName>pr-validation-app</finalName>
                             <appendAssemblyId>true</appendAssemblyId>
                         </configuration>
                     </execution>
                 </executions>
             </plugin>
+
+            <!-- CodeQL Plugin -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-clean-plugin</artifactId>
+                <version>3.3.2</version>
+            </plugin>
         </plugins>
     </build>
+
+    <reporting>
+        <plugins>
+            <!-- SpotBugs Report -->
+            <plugin>
+                <groupId>com.github.spotbugs</groupId>
+                <artifactId>spotbugs-maven-plugin</artifactId>
+                <version>${maven.spotbugs.plugin.version}</version>
+            </plugin>
+
+            <!-- Checkstyle Report -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-checkstyle-plugin</artifactId>
+                <version>${maven.checkstyle.plugin.version}</version>
+                <configuration>
+                    <configLocation>google_checks.xml</configLocation>
+                </configuration>
+            </plugin>
+
+            <!-- Surefire Report -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-report-plugin</artifactId>
+                <version>3.1.2</version>
+            </plugin>
+        </plugins>
+    </reporting>
 
 </project>
