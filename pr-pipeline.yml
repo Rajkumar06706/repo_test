@@ -1,444 +1,149 @@
-name: Complete PR Pipeline
+name: Create PR Validation Pipeline
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
     branches:
       - main
-      - master
       - develop
+      - feature/**
 
 permissions:
   contents: read
-  pull-requests: write
   security-events: write
-  checks: write
-  statuses: write
+  pull-requests: write
 
 jobs:
+
   unit-tests:
     name: Unit Tests
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout code
+      - name: Checkout Source
         uses: actions/checkout@v4
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v3
+      - name: Setup Java
+        uses: actions/setup-java@v4
         with:
-          java-version: '17'
-          distribution: 'temurin'
-          cache: maven
+          distribution: temurin
+          java-version: '21'
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-          cache: 'pip'
+      - name: Run JUnit Tests
+        run: mvn clean test
 
-      - name: Run Maven Unit Tests (JUnit)
-        if: hashFiles('pom.xml') != ''
-        run: mvn test -DskipITs
+      # Uncomment if repository is Python
+      # - name: Setup Python
+      #   uses: actions/setup-python@v5
+      #   with:
+      #     python-version: '3.11'
+      #
+      # - name: Install Dependencies
+      #   run: pip install -r requirements.txt
+      #
+      # - name: Run Pytest
+      #   run: pytest
 
-      - name: Run Python Tests (pytest)
-        if: hashFiles('requirements.txt') != '' || hashFiles('setup.py') != ''
-        run: |
-          pip install -r requirements.txt pytest pytest-cov 2>/dev/null || true
-          pytest --cov=. --cov-report=xml --junitxml=test-results.xml || true
-
-      - name: Publish Test Results
-        uses: EnricoMi/publish-unit-test-result-action@v2
-        if: always()
-        with:
-          files: '**/test-results.xml'
-          check_name: Unit Test Results
-
-  code-quality:
-    name: Code Quality Analysis
+  static-analysis:
+    name: Checkstyle and SpotBugs
+    runs-on: ubuntu-latest
     needs: unit-tests
-    runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v3
+      - uses: actions/setup-java@v4
         with:
-          java-version: '17'
-          distribution: 'temurin'
-          cache: maven
+          distribution: temurin
+          java-version: '21'
 
-      - name: Run Checkstyle
-        if: hashFiles('pom.xml') != ''
-        run: mvn checkstyle:check || true
+      - name: Checkstyle
+        run: mvn checkstyle:check
 
-      - name: Run SpotBugs
-        if: hashFiles('pom.xml') != ''
-        run: mvn spotbugs:check || true
+      - name: SpotBugs
+        run: mvn spotbugs:check
 
-      - name: Upload Checkstyle Results
-        if: always()
-        uses: actions/upload-artifact@v3
-        with:
-          name: checkstyle-report
-          path: '**/checkstyle-result.xml'
-          retention-days: 30
-
-      - name: Upload SpotBugs Results
-        if: always()
-        uses: actions/upload-artifact@v3
-        with:
-          name: spotbugs-report
-          path: '**/spotbugsXml.xml'
-          retention-days: 30
-
-      - name: Comment PR with Code Quality Status
-        if: always()
-        uses: actions/github-script@v7
-        with:
-          script: |
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: '✅ Code Quality Analysis (Checkstyle & SpotBugs) completed'
-            })
-
-  github-security-scan:
-    name: GitHub Advanced Security Scans
-    needs: code-quality
+  github-advanced-security:
+    name: GitHub Advanced Security Scan
     runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+    needs: static-analysis
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v3
-        with:
-          java-version: '17'
-          distribution: 'temurin'
-          cache: maven
+    steps:
+      - uses: actions/checkout@v4
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v2
+        uses: github/codeql-action/init@v3
         with:
-          languages: 'java, python, javascript'
-          queries: security-and-quality
+          languages: java
 
-      - name: Autobuild
-        uses: github/codeql-action/autobuild@v2
+      - name: Build
+        run: mvn clean compile
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v2
-        with:
-          category: '/language:java,python,javascript'
-
-      - name: Run Dependency Check
-        uses: dependency-check/Dependency-Check_Action@main
-        with:
-          project: 'pipeline'
-          path: '.'
-          format: 'JSON'
-          args: >
-            --enableExperimental
-
-      - name: Upload Dependency Check Results
-        if: always()
-        uses: actions/upload-artifact@v3
-        with:
-          name: dependency-check-report
-          path: '**/dependency-check-report.json'
-          retention-days: 30
-
-      - name: Comment PR with Security Scan Status
-        if: always()
-        uses: actions/github-script@v7
-        with:
-          script: |
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: '🔒 GitHub Advanced Security Scans (CodeQL + Dependency Check) completed'
-            })
+        uses: github/codeql-action/analyze@v3
 
   wiz-security-scan:
     name: Wiz Security Scan
-    needs: github-security-scan
     runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+    needs: github-advanced-security
 
-      - name: Run Wiz CLI Scan
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Wiz CLI Scan
         env:
           WIZ_CLIENT_ID: ${{ secrets.WIZ_CLIENT_ID }}
           WIZ_CLIENT_SECRET: ${{ secrets.WIZ_CLIENT_SECRET }}
         run: |
-          # Install Wiz CLI
-          curl -s https://downloads.wiz.io/cli/latest/wiz-cli-linux -o wiz
-          chmod +x wiz
-          
-          # Run Wiz scan
-          ./wiz auth --id="${WIZ_CLIENT_ID}" --secret="${WIZ_CLIENT_SECRET}" || echo "Wiz credentials not configured"
-          ./wiz dir scan . -o json > wiz-scan-report.json || echo "Wiz scan completed with warnings"
+          curl -fsSL https://downloads.wiz.io/wizcli/latest/wizcli-linux-amd64 \
+            -o wizcli
+          chmod +x wizcli
 
-      - name: Upload Wiz Scan Results
-        if: always()
-        uses: actions/upload-artifact@v3
-        with:
-          name: wiz-scan-report
-          path: wiz-scan-report.json
-          retention-days: 30
+          ./wizcli auth \
+            --id $WIZ_CLIENT_ID \
+            --secret $WIZ_CLIENT_SECRET
 
-      - name: Comment PR with Wiz Scan Status
-        if: always()
-        uses: actions/github-script@v7
-        with:
-          script: |
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: '🛡️ Wiz Security Scan completed'
-            })
+          ./wizcli scan dir .
 
   gemini-advisory-review:
     name: Gemini Advisory Review
-    needs: wiz-security-scan
     runs-on: ubuntu-latest
+    needs: wiz-security-scan
+
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Get PR Diff
-        uses: actions/github-script@v7
-        id: pr-diff
+      - uses: actions/checkout@v4
         with:
-          script: |
-            const { data: pullRequest } = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.issue.number,
-            });
-            
-            const { data: files } = await github.rest.pulls.listFiles({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.issue.number,
-            });
-            
-            return {
-              title: pullRequest.title,
-              description: pullRequest.body,
-              files: files
-            };
+          fetch-depth: 0
 
-      - name: Analyze with Gemini API
+      - name: Generate PR Diff
+        run: |
+          git fetch origin ${{ github.base_ref }}
+          git diff origin/${{ github.base_ref }}...HEAD > pr.diff
+
+      - name: Gemini Review
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          if [ -z "$GEMINI_API_KEY" ]; then
-            echo "Gemini API key not configured, skipping review"
-            exit 0
-          fi
-          
-          # Create analysis prompt
-          cat > analyze.py << 'EOF'
-          import os
-          import json
-          import requests
-          
-          api_key = os.getenv('GEMINI_API_KEY')
-          
-          if not api_key:
-              print("Gemini API key not configured")
-              exit(0)
-          
-          # Sample code review analysis
-          prompt = """Please review this code for:
-          1. Security vulnerabilities
-          2. Best practices violations
-          3. Performance issues
-          4. Code maintainability
-          
-          Focus on critical issues only."""
-          
-          # This would integrate with Gemini API
-          print("Gemini Advisory Review: Analysis completed")
-          EOF
-          
-          python3 analyze.py || echo "Gemini review completed"
+          PR_DIFF=$(cat pr.diff)
+          curl -X POST \
+          "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${GEMINI_API_KEY}" \
+          -H "Content-Type: application/json" \
+          -d "{
+            \"contents\": [{
+              \"parts\": [{
+                \"text\": \"Review the following pull request for security, coding standards, and maintainability:\\n${PR_DIFF}\"
+              }]
+            }]
+          }"
 
-      - name: Comment PR with Gemini Review Status
-        uses: actions/github-script@v7
-        with:
-          script: |
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: '🤖 Gemini Advisory Review completed. Please review recommendations and approve if satisfied.'
-            })
-
-  reviewer-approval-gate:
+  approval-gate:
     name: Reviewer Approval Gate
+    runs-on: ubuntu-latest
     needs: gemini-advisory-review
-    runs-on: ubuntu-latest
+
     steps:
-      - name: Check PR Approvals
-        uses: actions/github-script@v7
+      - name: Await Approval
+        uses: trstringer/manual-approval@v1
         with:
-          script: |
-            const { data: reviews } = await github.rest.pulls.listReviews({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.issue.number,
-            });
-            
-            const approvals = reviews.filter(r => r.state === 'APPROVED');
-            const dismissals = reviews.filter(r => r.state === 'DISMISSED');
-            const changes = reviews.filter(r => r.state === 'CHANGES_REQUESTED');
-            
-            console.log(`Approvals: ${approvals.length}`);
-            console.log(`Changes Requested: ${changes.length}`);
-            console.log(`Dismissals: ${dismissals.length}`);
-            
-            if (changes.length > 0) {
-              core.setFailed('Changes requested by reviewers');
-            }
-            
-            if (approvals.length === 0) {
-              core.warning('No approvals yet. Waiting for reviewer approval.');
-            }
-
-      - name: Report Approval Status
-        uses: actions/github-script@v7
-        with:
-          script: |
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: '👥 Reviewer Approval Gate: Status check completed. All automated checks passed!'
-            })
-
-  merge-to-protected-branch:
-    name: Auto-Merge to Protected Branch
-    needs: reviewer-approval-gate
-    if: github.event.pull_request.draft == false
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check if all checks passed
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const { data: pullRequest } = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.issue.number,
-            });
-            
-            console.log(`PR State: ${pullRequest.state}`);
-            console.log(`Mergeable: ${pullRequest.mergeable}`);
-            console.log(`Review Decision: ${pullRequest.review_decision}`);
-            
-            if (pullRequest.mergeable === false) {
-              core.setFailed('Pull request has merge conflicts');
-            }
-
-      - name: Auto-merge PR
-        uses: actions/github-script@v7
-        with:
-          script: |
-            try {
-              const { data: pullRequest } = await github.rest.pulls.get({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                pull_number: context.issue.number,
-              });
-              
-              if (pullRequest.draft) {
-                console.log('PR is in draft state, skipping merge');
-                return;
-              }
-              
-              // Check for approvals
-              const { data: reviews } = await github.rest.pulls.listReviews({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                pull_number: context.issue.number,
-              });
-              
-              const approvals = reviews.filter(r => r.state === 'APPROVED');
-              
-              if (approvals.length > 0 && pullRequest.mergeable) {
-                await github.rest.pulls.merge({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  pull_number: context.issue.number,
-                  merge_method: 'squash',
-                  commit_title: `Merge PR #${context.issue.number}`,
-                  commit_message: `Automated merge after all checks passed and approval received`
-                });
-                
-                console.log('✅ PR merged successfully');
-              } else {
-                console.log('⏳ Waiting for approvals or merge conflicts resolution');
-              }
-            } catch (error) {
-              console.log(`Manual approval required for merge: ${error.message}`);
-            }
-
-      - name: Post Merge Summary
-        if: always()
-        uses: actions/github-script@v7
-        with:
-          script: |
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: '✅ Pipeline Complete! All stages passed:\n\n' +
-                    '- ✅ Unit Tests\n' +
-                    '- ✅ Code Quality (Checkstyle & SpotBugs)\n' +
-                    '- ✅ GitHub Advanced Security Scans\n' +
-                    '- ✅ Wiz Security Scan\n' +
-                    '- ✅ Gemini Advisory Review\n' +
-                    '- ✅ Reviewer Approval\n' +
-                    '- ✅ Ready for Merge'
-            })
-
-  notification:
-    name: Pipeline Notification
-    needs: [unit-tests, code-quality, github-security-scan, wiz-security-scan, gemini-advisory-review, reviewer-approval-gate]
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - name: Determine Pipeline Status
-        id: status
-        run: |
-          if [ "${{ needs.unit-tests.result }}" == "failure" ] || \
-             [ "${{ needs.code-quality.result }}" == "failure" ] || \
-             [ "${{ needs.github-security-scan.result }}" == "failure" ] || \
-             [ "${{ needs.wiz-security-scan.result }}" == "failure" ]; then
-            echo "status=failed" >> $GITHUB_OUTPUT
-          else
-            echo "status=success" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Post Pipeline Status to PR
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const status = '${{ steps.status.outputs.status }}';
-            const emoji = status === 'success' ? '✅' : '❌';
-            
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: `${emoji} **Pipeline Status: ${status.toUpperCase()}**\n\nAll validation stages have been processed.`
-            })
+          secret: ${{ secrets.GITHUB_TOKEN }}
+          approvers: team-leads,architects
+          minimum-approvals: 1
