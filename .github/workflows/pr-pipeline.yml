@@ -1,4 +1,4 @@
-name: Create PR Validation Pipeline
+name: Create PR Pipeline
 
 on:
   pull_request:
