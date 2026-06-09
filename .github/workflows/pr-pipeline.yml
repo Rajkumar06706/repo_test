@@ -168,4 +168,3 @@ jobs:
         run: |
           echo "Published image:"
           echo "$GAR_REGION-docker.pkg.dev/$PROJECT_ID/$GAR_REPOSITORY/$IMAGE_NAME:${{ github.sha }}"
-```
