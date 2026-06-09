@@ -23,15 +23,25 @@ jobs:
       - name: Checkout Source
         uses: actions/checkout@v4
 
+      - name: Check if pom.xml exists
+        id: check_pom
+        run: test -f pom.xml && echo "exists=true" >> $GITHUB_OUTPUT || echo "exists=false" >> $GITHUB_OUTPUT
+
       - name: Setup Java
+        if: steps.check_pom.outputs.exists == 'true'
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
 
       - name: Run JUnit Tests
+        if: steps.check_pom.outputs.exists == 'true'
         run: mvn clean test
         continue-on-error: true
+
+      - name: No Maven Project Found
+        if: steps.check_pom.outputs.exists == 'false'
+        run: echo "Warning: No pom.xml found. Skipping Maven tests."
 
   static-analysis:
     name: Checkstyle and SpotBugs
@@ -42,18 +52,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check if pom.xml exists
+        id: check_pom
+        run: test -f pom.xml && echo "exists=true" >> $GITHUB_OUTPUT || echo "exists=false" >> $GITHUB_OUTPUT
+
       - uses: actions/setup-java@v4
+        if: steps.check_pom.outputs.exists == 'true'
         with:
           distribution: temurin
           java-version: '21'
 
       - name: Checkstyle
+        if: steps.check_pom.outputs.exists == 'true'
         run: mvn checkstyle:check
         continue-on-error: true
 
       - name: SpotBugs
+        if: steps.check_pom.outputs.exists == 'true'
         run: mvn spotbugs:check
         continue-on-error: true
+
+      - name: No Maven Project Found
+        if: steps.check_pom.outputs.exists == 'false'
+        run: echo "Warning: No pom.xml found. Skipping static analysis."
 
   github-advanced-security:
     name: GitHub Advanced Security Scan
@@ -64,18 +85,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check if pom.xml exists
+        id: check_pom
+        run: test -f pom.xml && echo "exists=true" >> $GITHUB_OUTPUT || echo "exists=false" >> $GITHUB_OUTPUT
+
       - name: Initialize CodeQL
+        if: steps.check_pom.outputs.exists == 'true'
         uses: github/codeql-action/init@v3
         with:
           languages: java
 
       - name: Build
+        if: steps.check_pom.outputs.exists == 'true'
         run: mvn clean compile
         continue-on-error: true
 
       - name: Perform CodeQL Analysis
+        if: steps.check_pom.outputs.exists == 'true'
         uses: github/codeql-action/analyze@v3
         continue-on-error: true
+
+      - name: No Maven Project Found
+        if: steps.check_pom.outputs.exists == 'false'
+        run: echo "Warning: No pom.xml found. Skipping CodeQL analysis."
 
   approval-gate:
     name: Approval Gate
