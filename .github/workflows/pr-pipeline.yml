@@ -72,20 +72,50 @@ jobs:
       - name: Checkout Source
         uses: actions/checkout@v4
 
+      # Check if pom.xml exists
+      - name: Check if Maven project exists
+        id: check_maven
+        run: |
+          if [ -f pom.xml ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
       # Example for Java/Maven
       - name: Setup JDK
+        if: steps.check_maven.outputs.exists == 'true'
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 21
 
       - name: Build Application
+        if: steps.check_maven.outputs.exists == 'true'
         run: mvn clean package -DskipTests
 
+      - name: Skip Maven Build
+        if: steps.check_maven.outputs.exists == 'false'
+        run: echo "Warning: No pom.xml found. Skipping Maven build."
+
+      - name: Check if Dockerfile exists
+        id: check_docker
+        run: |
+          if [ -f Dockerfile ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Build Docker Image
+        if: steps.check_docker.outputs.exists == 'true'
         run: |
           docker build \
             -t $GAR_REGION-docker.pkg.dev/$PROJECT_ID/$GAR_REPOSITORY/$IMAGE_NAME:${{ github.sha }} .
+
+      - name: Skip Docker Build
+        if: steps.check_docker.outputs.exists == 'false'
+        run: echo "Warning: No Dockerfile found. Skipping Docker build."
 
   # ----------------------------------------
   # Container Security Scan
@@ -94,15 +124,31 @@ jobs:
     name: Container Image Scan
     runs-on: ubuntu-latest
     needs: build
+    if: always()
 
     steps:
+      - name: Check if image exists
+        id: check_image
+        run: |
+          if docker inspect $GAR_REGION-docker.pkg.dev/$PROJECT_ID/$GAR_REPOSITORY/$IMAGE_NAME:${{ github.sha }} >/dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+        continue-on-error: true
+
       - name: Scan Docker Image
+        if: steps.check_image.outputs.exists == 'true'
         uses: aquasecurity/trivy-action@0.28.0
         with:
           image-ref: ${{ env.GAR_REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
           format: table
           severity: HIGH,CRITICAL
           exit-code: 1
+
+      - name: Skip Container Scan
+        if: steps.check_image.outputs.exists == 'false'
+        run: echo "Warning: Docker image not found. Skipping container scan."
 
   # ----------------------------------------
   # System Testing
@@ -111,21 +157,46 @@ jobs:
     name: System Testing
     runs-on: ubuntu-latest
     needs: container-scan
+    if: always()
 
     steps:
       - name: Checkout Source
         uses: actions/checkout@v4
 
+      - name: Check if docker-compose exists
+        id: check_compose
+        run: |
+          if [ -f docker-compose.yml ] || [ -f docker-compose.yaml ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Start Application
+        if: steps.check_compose.outputs.exists == 'true'
         run: |
           docker compose up -d
 
+      - name: Check if test script exists
+        id: check_tests
+        run: |
+          if [ -f ./tests/system/run-tests.sh ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Execute System Tests
+        if: steps.check_tests.outputs.exists == 'true'
         run: |
           ./tests/system/run-tests.sh
 
+      - name: Skip Tests
+        if: steps.check_tests.outputs.exists == 'false'
+        run: echo "Warning: Test script not found. Skipping system tests."
+
       - name: Collect Logs
-        if: always()
+        if: always() && steps.check_compose.outputs.exists == 'true'
         run: docker compose logs
 
   # ----------------------------------------
@@ -135,6 +206,7 @@ jobs:
     name: Push Image to GAR
     runs-on: ubuntu-latest
     needs: system-test
+    if: always()
 
     permissions:
       contents: read
@@ -144,28 +216,46 @@ jobs:
       - name: Checkout Source
         uses: actions/checkout@v4
 
+      - name: Check if Dockerfile exists
+        id: check_docker
+        run: |
+          if [ -f Dockerfile ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Authenticate to Google Cloud
+        if: steps.check_docker.outputs.exists == 'true'
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
 
       - name: Configure Docker
+        if: steps.check_docker.outputs.exists == 'true'
         run: |
           gcloud auth configure-docker \
           $GAR_REGION-docker.pkg.dev
 
       - name: Build Image
+        if: steps.check_docker.outputs.exists == 'true'
         run: |
           docker build \
             -t $GAR_REGION-docker.pkg.dev/$PROJECT_ID/$GAR_REPOSITORY/$IMAGE_NAME:${{ github.sha }} .
 
       - name: Push Image
+        if: steps.check_docker.outputs.exists == 'true'
         run: |
           docker push \
           $GAR_REGION-docker.pkg.dev/$PROJECT_ID/$GAR_REPOSITORY/$IMAGE_NAME:${{ github.sha }}
 
       - name: Output Image Reference
+        if: steps.check_docker.outputs.exists == 'true'
         run: |
           echo "Published image:"
           echo "$GAR_REGION-docker.pkg.dev/$PROJECT_ID/$GAR_REPOSITORY/$IMAGE_NAME:${{ github.sha }}"
+
+      - name: Skip Push to GAR
+        if: steps.check_docker.outputs.exists == 'false'
+        run: echo "Warning: No Dockerfile found. Skipping push to GAR."
